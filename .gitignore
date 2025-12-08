@@ -1,32 +1,99 @@
-# Terraform
+# ============================================
+# Terraform files
+# ============================================
 *.tfstate
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
 terraform.tfvars
+terraform/.terraform.lock.hcl
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/terraform.tfvarsterraform/backend.tf
+terraform/main.tf
+terraform/outputs.tf
+terraform/variables.tf
+terraform/versions.tf
+terraform/scripts/
+terraform/scripts/user_data.sh
+terraform/modules/
+terraform/*.tfvars
+*.tf
+*.tfvars
+*.tfvars.json
 
-# Python
+
+# ============================================
+# Python files
+# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
 .venv/
 venv/
 ENV/
+.env/
+env/
+env.bak/
+venv.bak/
+*.egg
+*.so    
+.Python
+build/
+dist/
+*.egg-info/
 
+# ============================================
 # IDE
+# ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
 
+# ============================================
+# Testing
+# ============================================
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+coverage.xml
+
+# ============================================
 # OS
+# ============================================
 .DS_Store
 Thumbs.db
 
+# ============================================
+# Logs
+# ============================================
+*.log
+
+# ============================================
 # Secrets
+# ============================================
 .env
 *.pem
 *.key
+credentials
+secrets/
+**/*_secret*
+**/*_key*
+.aws/
 
-# Logs
-*.log
+# ============================================
+# Other files and directories
+# ============================================
+.gitignore
+.dockerignore
+k8s/
+docs/
+logs/
+data/
+output/
+tmp/
+temp/
+*.bak
+*.old   
