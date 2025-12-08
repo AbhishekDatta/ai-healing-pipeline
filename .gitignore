@@ -97,3 +97,6 @@ tmp/
 temp/
 *.bak
 *.old   
+app/
+online-boutique/
+setup-ssh.sh

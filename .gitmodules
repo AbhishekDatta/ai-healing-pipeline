@@ -1,3 +1,0 @@
-[submodule "app/online-boutique"]
-	path = app/online-boutique
-	url = https://github.com/GoogleCloudPlatform/microservices-demo
