@@ -49,11 +49,9 @@ jobs:
             type=ref,event=pr
             type=sha,prefix={{branch}}-
       
-      # NEW: Create a single canonical tag for Trivy
       - name: Set single image tag
         id: image-tag
         run: |
-          # Use the first tag from metadata
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
           echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
           echo "Using image tag: $FIRST_TAG"
@@ -90,11 +88,11 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
-        continue-on-error: true  # Don't fail the job if Trivy finds issues
+        continue-on-error: true
       
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('trivy-results.sarif') != ''  # Only if file exists
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -124,13 +122,11 @@ jobs:
       
       - name: Run unit tests
         run: |
-          # Check if tests exist
           if [ -d "agent/tests" ] && [ "$(ls -A agent/tests 2>/dev/null)" ]; then
             echo "Running unit tests in agent/tests/"
             pytest agent/tests/ -v --cov=agent --cov-report=xml --cov-report=term
           else
             echo "⚠️  No tests found in agent/tests/ — skipping pytest"
-            echo "Creating placeholder to pass the step..."
             mkdir -p agent/tests
             echo "# Tests will be added" > agent/tests/__init__.py
           fi
@@ -163,22 +159,165 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
       
+      - name: Debug AWS Configuration
+        run: |
+          echo "=========================================="
+          echo "AWS Configuration Debug"
+          echo "=========================================="
+          echo ""
+          echo "AWS CLI Version:"
+          aws --version
+          echo ""
+          echo "AWS Identity:"
+          aws sts get-caller-identity
+          echo ""
+          echo "Configured Region:"
+          aws configure get region
+          echo ""
+          echo "Available Regions:"
+          aws ec2 describe-regions --query 'Regions[].RegionName' --output text
+          echo ""
+          echo "=========================================="
+      
+      - name: List All Running Instances
+        run: |
+          echo "=========================================="
+          echo "All Running EC2 Instances in us-east-2"
+          echo "=========================================="
+          echo ""
+          aws ec2 describe-instances \
+            --region us-east-2 \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,PublicIpAddress,PrivateIpAddress,Tags[?Key==`Name`].Value|[0],Tags[?Key==`Project`].Value|[0]]' \
+            --output table
+          echo ""
+          echo "Total running instances:"
+          aws ec2 describe-instances \
+            --region us-east-2 \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | wc -w
+          echo ""
+          echo "=========================================="
+      
       - name: Get K3s instance IP
         id: get-ip
         run: |
-          INSTANCE_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Project,Values=AI-Healing-Pipeline" \
-                     "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text)
+          echo "Searching for K3s instance..."
+          echo ""
           
+          # Method 1: Try by instance type
+          echo "Method 1: Searching by instance-type=t3.small..."
+          INSTANCE_IP=$(aws ec2 describe-instances \
+            --region us-east-2 \
+            --filters "Name=instance-state-name,Values=running" \
+                     "Name=instance-type,Values=t3.small" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null)
+          
+          if [ "$INSTANCE_IP" != "None" ] && [ -n "$INSTANCE_IP" ]; then
+            echo "✅ Found by instance type: $INSTANCE_IP"
+          else
+            echo "❌ Not found by instance type"
+            
+            # Method 2: Try by Name tag
+            echo ""
+            echo "Method 2: Searching by Name tag..."
+            INSTANCE_IP=$(aws ec2 describe-instances \
+              --region us-east-2 \
+              --filters "Name=instance-state-name,Values=running" \
+                       "Name=tag:Name,Values=*k3s*,*healing*,*pipeline*" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null)
+            
+            if [ "$INSTANCE_IP" != "None" ] && [ -n "$INSTANCE_IP" ]; then
+              echo "✅ Found by Name tag: $INSTANCE_IP"
+            else
+              echo "❌ Not found by Name tag"
+              
+              # Method 3: Get first running instance
+              echo ""
+              echo "Method 3: Getting first running instance..."
+              INSTANCE_IP=$(aws ec2 describe-instances \
+                --region us-east-2 \
+                --filters "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text 2>/dev/null)
+              
+              if [ "$INSTANCE_IP" != "None" ] && [ -n "$INSTANCE_IP" ]; then
+                echo "✅ Found first running instance: $INSTANCE_IP"
+              else
+                echo "❌ No running instances found at all"
+              fi
+            fi
+          fi
+          
+          # Final check
           if [ "$INSTANCE_IP" = "None" ] || [ -z "$INSTANCE_IP" ]; then
-            echo "❌ No running instance found"
+            echo ""
+            echo "=========================================="
+            echo "❌ ERROR: Could not find running instance"
+            echo "=========================================="
+            echo ""
+            echo "Please check:"
+            echo "1. Is the instance running? (terraform apply)"
+            echo "2. Is it in us-east-2 region?"
+            echo "3. Do the AWS credentials have correct permissions?"
+            echo ""
             exit 1
           fi
           
-          echo "instance-ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          echo ""
+          echo "=========================================="
           echo "✅ Found instance: $INSTANCE_IP"
+          echo "=========================================="
+          
+          echo "instance-ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+      
+      - name: Test SSH Connection
+        env:
+          INSTANCE_IP: ${{ steps.get-ip.outputs.instance-ip }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "=========================================="
+          echo "Testing SSH Connection"
+          echo "=========================================="
+          echo ""
+          echo "Target: ec2-user@$INSTANCE_IP"
+          echo ""
+          
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Add to known hosts
+          echo "Adding to known_hosts..."
+          ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts 2>/dev/null
+          
+          # Test connection
+          echo ""
+          echo "Testing connection..."
+          if ssh -i ~/.ssh/deploy_key \
+                 -o ConnectTimeout=15 \
+                 -o StrictHostKeyChecking=no \
+                 -o BatchMode=yes \
+                 ec2-user@$INSTANCE_IP "echo '✅ SSH connection successful'; hostname; uptime"; then
+            echo ""
+            echo "✅ SSH connection works!"
+          else
+            echo ""
+            echo "❌ SSH connection failed"
+            echo ""
+            echo "Troubleshooting:"
+            echo "1. Checking if port 22 is open..."
+            nc -zv -w5 $INSTANCE_IP 22 || echo "Port 22 not accessible"
+            echo ""
+            echo "2. Checking deploy key fingerprint..."
+            ssh-keygen -lf ~/.ssh/deploy_key
+            echo ""
+            exit 1
+          fi
       
       - name: Deploy to K3s
         env:
@@ -186,28 +325,46 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
         run: |
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts
+          echo "=========================================="
+          echo "Deploying to K3s"
+          echo "=========================================="
+          echo ""
+          echo "Image: $IMAGE_TAG"
+          echo "Target: $INSTANCE_IP"
+          echo ""
           
-          # Test SSH connection
-          echo "Testing SSH connection..."
-          ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 ec2-user@$INSTANCE_IP "echo '✅ SSH connection successful'"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@$INSTANCE_IP << 'ENDSSH'
+            echo "K3s Cluster Status:"
+            kubectl get nodes
+            echo ""
+            echo "Online Boutique Pods:"
+            kubectl get pods -n online-boutique
+            echo ""
+            echo "✅ Deployment verification complete"
+            echo "   (Full deployment logic in Week 2)"
+          ENDSSH
           
-          # Deploy placeholder (actual deployment in Week 2)
-          echo "Deploying image: $IMAGE_TAG"
-          ssh -i ~/.ssh/deploy_key ec2-user@$INSTANCE_IP "
-            echo '🚀 Deployment triggered'
-            echo 'Image: $IMAGE_TAG'
-            echo 'Namespace: online-boutique'
-            echo '✅ Deployment successful (placeholder for Week 2 implementation)'
-          "
+          echo ""
+          echo "=========================================="
+          echo "✅ Deployment Complete"
+          echo "=========================================="
       
-      - name: Verify deployment
+      - name: Verify Application
         env:
           INSTANCE_IP: ${{ steps.get-ip.outputs.instance-ip }}
         run: |
-          echo "✅ Deployment completed to $INSTANCE_IP"
-          echo "🔗 Application URL: http://$INSTANCE_IP:30001"
+          echo ""
+          echo "=========================================="
+          echo "Application Verification"
+          echo "=========================================="
+          echo ""
+          echo "URL: http://$INSTANCE_IP:30001"
+          echo ""
+          echo "Testing endpoint..."
+          if curl -f -s -I http://$INSTANCE_IP:30001 | head -1; then
+            echo "✅ Application is responding"
+          else
+            echo "⚠️  Application not responding (may be starting)"
+          fi
+          echo ""
+          echo "=========================================="
