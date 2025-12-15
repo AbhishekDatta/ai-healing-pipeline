@@ -30,7 +30,7 @@ def test_root_endpoint():
     """
     Test the root endpoint
     
-    LEARNING: AAA Pattern
+    AAA Pattern
     - Arrange: Set up test conditions (none needed here)
     - Act: Make the request
     - Assert: Verify the response
@@ -51,7 +51,7 @@ def test_health_check():
     """
     Test health check endpoint
     
-    LEARNING: Health checks are critical
+    Health checks are critical
     - Kubernetes uses this to know if pod is healthy
     - Should be fast and simple
     - Should return 200 if everything is OK
@@ -68,7 +68,7 @@ def test_metrics_endpoint():
     """
     Test metrics endpoint
     
-    LEARNING: Metrics endpoints provide observability
+    Metrics endpoints provide observability
     """
     response = client.get("/metrics")
     
@@ -95,7 +95,7 @@ def test_heal_pipeline_success():
     """
     Test healing endpoint with valid input
     
-    LEARNING: Testing happy path
+    Testing happy path
     - Valid request data
     - Expected successful response
     """
@@ -133,7 +133,7 @@ def test_heal_pipeline_minimal_data():
     """
     Test with minimal required fields
     
-    LEARNING: Testing boundary conditions
+    Testing boundary conditions
     """
     failure_data = {
         "stage": "build",
@@ -155,7 +155,7 @@ def test_heal_pipeline_missing_required_field():
     """
     Test with missing required fields
     
-    LEARNING: Validation testing
+    Validation testing
     - Pydantic automatically validates request data
     - Missing required fields return 422 Unprocessable Entity
     """
@@ -179,7 +179,7 @@ def test_heal_pipeline_invalid_data_types():
     """
     Test with invalid data types
     
-    LEARNING: Type validation
+    Type validation
     - Pydantic checks types automatically
     """
     invalid_data = {
@@ -197,7 +197,7 @@ def test_heal_pipeline_empty_string():
     """
     Test with empty strings
     
-    LEARNING: Edge case testing
+    Edge case testing
     """
     failure_data = {
         "stage": "",  # Empty but still a string
@@ -220,7 +220,7 @@ async def test_multiple_concurrent_requests():
     """
     Test handling multiple concurrent requests
     
-    LEARNING: Concurrency testing
+    Concurrency testing
     - FastAPI handles async requests well
     - Important for production systems
     """
@@ -254,7 +254,7 @@ def test_heal_different_stages():
     """
     Test healing for different pipeline stages
     
-    LEARNING: Testing various inputs
+    Testing various inputs
     """
     stages = ["build", "test", "security-scan", "deploy"]
     
@@ -276,7 +276,7 @@ def test_heal_with_metadata():
     """
     Test healing with rich metadata
     
-    LEARNING: Testing optional fields
+    Testing optional fields
     """
     failure_data = {
         "stage": "test",
@@ -305,7 +305,7 @@ def test_healing_result_structure():
     """
     Test that healing result has correct structure
     
-    LEARNING: Schema validation
+    Schema validation
     """
     failure_data = {
         "stage": "test",
@@ -336,7 +336,7 @@ def test_confidence_score_range():
     """
     Test that confidence scores are valid
     
-    LEARNING: Domain-specific validation
+    Domain-specific validation
     - Confidence should always be between 0 and 1
     """
     failure_data = {
@@ -361,7 +361,7 @@ def test_very_long_error_message():
     """
     Test with very long error message
     
-    LEARNING: Stress testing
+    Stress testing
     """
     failure_data = {
         "stage": "test",
@@ -378,7 +378,7 @@ def test_special_characters_in_input():
     """
     Test with special characters
     
-    LEARNING: Input sanitization testing
+    Input sanitization testing
     """
     failure_data = {
         "stage": "test",
@@ -400,7 +400,7 @@ def sample_failure():
     """
     Fixture that provides reusable test data
     
-    LEARNING: DRY (Don't Repeat Yourself) in tests
+    DRY (Don't Repeat Yourself) in tests
     - Fixtures reduce code duplication
     - Make tests more maintainable
     """
@@ -420,7 +420,7 @@ def test_using_fixture(sample_failure):
     """
     Test using a fixture
     
-    LEARNING: Pytest automatically injects fixtures
+    Pytest automatically injects fixtures
     """
     response = client.post("/heal", json=sample_failure)
     assert response.status_code == 200
