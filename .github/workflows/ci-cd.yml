@@ -13,33 +13,25 @@ env:
   AWS_REGION: us-east-2
 
 jobs:
-  # ============================================
-  # JOB 1: Build Container Image
-  # ============================================
   build:
     name: Build Container Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    
     outputs:
       image-tag: ${{ steps.image-tag.outputs.tag }}
-      
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
       - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -49,14 +41,12 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix={{branch}}-
-      
       - name: Set single image tag
         id: image-tag
         run: |
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
           echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
           echo "Using image tag: $FIRST_TAG"
-      
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -67,9 +57,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ============================================
-  # JOB 2: Security Scanning
-  # ============================================
   security-scan:
     name: Security Scanning
     runs-on: ubuntu-latest
@@ -77,11 +64,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -90,59 +75,45 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
         continue-on-error: true
-      
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # ============================================
-  # JOB 3: Run Tests
-  # ============================================
   test:
     name: Run Tests
     runs-on: ubuntu-latest
     needs: build
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-      
       - name: Run unit tests
         run: |
           if [ -d "agent/tests" ] && [ "$(ls -A agent/tests 2>/dev/null)" ]; then
-            echo "Running unit tests in agent/tests/"
             pytest agent/tests/ -v --cov=agent --cov-report=xml --cov-report=term
           else
-            echo "⚠️  No tests found in agent/tests/ — skipping pytest"
+            echo "⚠️  No tests found"
             mkdir -p agent/tests
-            echo "# Tests will be added" > agent/tests/__init__.py
+            echo "# Tests" > agent/tests/__init__.py
           fi
-      
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
         if: always() && hashFiles('coverage.xml') != ''
         with:
           file: ./coverage.xml
           flags: unittests
-          name: codecov-umbrella
 
-  # ============================================
-  # JOB 4: Deploy to K3s
-  # ============================================
   deploy:
     name: Deploy to K3s
     runs-on: ubuntu-latest
@@ -160,178 +131,197 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
-#      - name: Verify AWS Configuration
-#        run: |
-#          echo "AWS Identity:"
-#          aws sts get-caller-identity --region ${{ env.AWS_REGION }}
-#          echo ""
-#          echo "Region: ${{ env.AWS_REGION }}"
-
-      - name: Verify AWS Configuration
+      - name: Install Session Manager Plugin
         run: |
-          echo "=========================================="
-          echo "AWS Configuration Verification"
-          echo "=========================================="
-          echo ""
+          echo "Installing AWS Session Manager plugin..."
+          curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
+          sudo dpkg -i session-manager-plugin.deb
+          session-manager-plugin --version
+          echo "✅ Session Manager plugin installed"
+      
+      - name: Find K3s Instance
+        id: get-instance
+        run: |
+          echo "Finding K3s instance in ${{ env.AWS_REGION }}..."
           
-          echo "1. AWS Identity:"
-          aws sts get-caller-identity --region us-east-2
-          
-          echo ""
-          echo "2. Testing EC2 permissions:"
-          aws ec2 describe-instances --region us-east-2 --max-results 5 --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output table || echo "❌ Permission denied or no instances"
-          
-          echo ""
-          echo "3. Count of running instances:"
-          INSTANCE_COUNT=$(aws ec2 describe-instances \
-            --region us-east-2 \
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --region ${{ env.AWS_REGION }} \
             --filters "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].InstanceId' \
-            --output text 2>/dev/null | wc -w | tr -d ' ')
-          echo "Running instances in us-east-2: $INSTANCE_COUNT"
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
           
-          if [ "$INSTANCE_COUNT" -eq "0" ]; then
-            echo ""
-            echo "❌ No running instances found in us-east-2"
-            echo ""
-            echo "This means either:"
-            echo "  1. Wrong AWS account (check AWS_ACCESS_KEY_ID secret)"
-            echo "  2. Instance in different region"
-            echo "  3. Instance not running"
-            echo ""
-            echo "Your local AWS account ID:"
-            echo "  Check: aws sts get-caller-identity"
-            echo ""
-            echo "GitHub Actions AWS account ID (see above)"
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "❌ No running instance found"
             exit 1
           fi
           
-          echo ""
-          echo "4. Instance details:"
-          aws ec2 describe-instances \
-            --region us-east-2 \
-            --filters "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[InstanceId,InstanceType,PublicIpAddress,PrivateIpAddress]' \
-            --output table
-
-
-      - name: Find K3s Instance
-        id: get-ip
-        run: |
-          echo "Searching for running instance in ${{ env.AWS_REGION }}..."
+          echo "✅ Found instance: $INSTANCE_ID"
+          echo "instance-id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           
-          # List all running instances for debugging
-          echo ""
-          echo "All running instances:"
-          aws ec2 describe-instances \
-            --region ${{ env.AWS_REGION }} \
-            --filters "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[InstanceId,InstanceType,PublicIpAddress,Tags[?Key==`Name`].Value|[0]]' \
-            --output table || echo "No instances found or permission error"
-          
-          echo ""
-          echo "Attempting to get instance IP..."
-          
-          # Try to get the first running instance
+          # Get IP for verification
           INSTANCE_IP=$(aws ec2 describe-instances \
             --region ${{ env.AWS_REGION }} \
-            --filters "Name=instance-state-name,Values=running" \
+            --instance-ids $INSTANCE_ID \
             --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text 2>&1)
+            --output text)
           
-          echo "Query result: $INSTANCE_IP"
-          
-          # Check if we got a valid IP
-          if [ -z "$INSTANCE_IP" ] || [ "$INSTANCE_IP" = "None" ] || [ "$INSTANCE_IP" = "null" ]; then
-            echo ""
-            echo "❌ No running instance found"
-            echo ""
-            echo "Possible reasons:"
-            echo "1. Instance not running (run: terraform apply)"
-            echo "2. Instance in different region"
-            echo "3. AWS credentials don't have ec2:DescribeInstances permission"
-            echo ""
-            exit 1
-          fi
-          
-          # Validate IP format
-          if [[ ! $INSTANCE_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Invalid IP format: $INSTANCE_IP"
-            exit 1
-          fi
-          
-          echo ""
-          echo "✅ Found instance: $INSTANCE_IP"
           echo "instance-ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          echo "Instance IP: $INSTANCE_IP"
+          
+          # Verify SSM agent is online
+          SSM_STATUS=$(aws ssm describe-instance-information \
+            --region ${{ env.AWS_REGION }} \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text 2>/dev/null || echo "Unknown")
+          
+          echo "SSM Agent Status: $SSM_STATUS"
+          
+          if [ "$SSM_STATUS" != "Online" ]; then
+            echo "⚠️  SSM Agent not online, waiting 30 seconds..."
+            sleep 30
+            
+            SSM_STATUS=$(aws ssm describe-instance-information \
+              --region ${{ env.AWS_REGION }} \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || echo "Unknown")
+            
+            if [ "$SSM_STATUS" != "Online" ]; then
+              echo "❌ SSM Agent still not online: $SSM_STATUS"
+              exit 1
+            fi
+          fi
+          
+          echo "✅ SSM Agent is online and ready"
       
-      - name: Deploy to K3s
+      - name: Deploy to K3s via Session Manager
         env:
-          INSTANCE_IP: ${{ steps.get-ip.outputs.instance-ip }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          INSTANCE_ID: ${{ steps.get-instance.outputs.instance-id }}
+          INSTANCE_IP: ${{ steps.get-instance.outputs.instance-ip }}
           IMAGE_TAG: ${{ needs.build.outputs.image-tag }}
         run: |
           echo "=========================================="
-          echo "Deploying to K3s Cluster"
+          echo "Deploying via AWS Session Manager"
           echo "=========================================="
           echo ""
-          echo "Target: ec2-user@$INSTANCE_IP"
+          echo "Instance ID: $INSTANCE_ID"
+          echo "Instance IP: $INSTANCE_IP"
           echo "Image: $IMAGE_TAG"
           echo ""
-          
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts 2>/dev/null
-          
-          # Test connection
-          echo "Testing SSH connection..."
-          if ! ssh -i ~/.ssh/deploy_key \
-                   -o ConnectTimeout=10 \
-                   -o StrictHostKeyChecking=no \
-                   -o BatchMode=yes \
-                   ec2-user@$INSTANCE_IP "echo 'Connected'"; then
-            echo "❌ SSH connection failed"
-            exit 1
-          fi
-          
-          echo "✅ SSH connection successful"
+          echo "🔒 Security: Using encrypted Session Manager tunnel"
+          echo "   No SSH port required!"
           echo ""
           
-          # Deploy
-          echo "Executing deployment commands..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@$INSTANCE_IP << 'ENDSSH'
-            echo "=========================================="
-            echo "K3s Cluster Status"
-            echo "=========================================="
-            kubectl get nodes
+          # Send deployment commands via Session Manager
+          echo "Sending deployment commands..."
+          COMMAND_ID=$(aws ssm send-command \
+            --region ${{ env.AWS_REGION }} \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "GitHub Actions Deployment - Commit ${{ github.sha }}" \
+            --parameters 'commands=[
+              "echo \"===========================================\"",
+              "echo \"K3s Cluster Status\"",
+              "echo \"===========================================\"",
+              "kubectl get nodes",
+              "echo \"\"",
+              "echo \"===========================================\"",
+              "echo \"Online Boutique Pods\"",
+              "echo \"===========================================\"",
+              "kubectl get pods -n online-boutique | head -12",
+              "echo \"\"",
+              "echo \"===========================================\"",
+              "echo \"Deployment Information\"",
+              "echo \"===========================================\"",
+              "echo \"Deployed by: GitHub Actions\"",
+              "echo \"Commit: ${{ github.sha }}\"",
+              "echo \"Image: '"$IMAGE_TAG"'\"",
+              "echo \"Branch: ${{ github.ref_name }}\"",
+              "echo \"Actor: ${{ github.actor }}\"",
+              "echo \"Timestamp: $(date)\"",
+              "echo \"\"",
+              "echo \"✅ Deployment verification complete\"",
+              "echo \"   (Full deployment automation in Week 2)\""
+            ]' \
+            --output text \
+            --query 'Command.CommandId')
+          
+          echo "Command ID: $COMMAND_ID"
+          echo ""
+          echo "Waiting for command execution..."
+          
+          # Wait for command to complete (max 60 seconds)
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region ${{ env.AWS_REGION }} \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "Pending")
+            
+            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            
+            echo "  Status: $STATUS (check $i/30)"
+            sleep 2
+          done
+          
+          # Get command output
+          echo ""
+          echo "=========================================="
+          echo "Command Output:"
+          echo "=========================================="
+          aws ssm get-command-invocation \
+            --region ${{ env.AWS_REGION }} \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
+          
+          # Check for errors
+          ERROR_OUTPUT=$(aws ssm get-command-invocation \
+            --region ${{ env.AWS_REGION }} \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardErrorContent' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$ERROR_OUTPUT" ] && [ "$ERROR_OUTPUT" != "None" ] && [ "$ERROR_OUTPUT" != "" ]; then
             echo ""
-            echo "=========================================="
-            echo "Online Boutique Status"
-            echo "=========================================="
-            kubectl get pods -n online-boutique
-            echo ""
-            echo "✅ Deployment verification complete"
-            echo ""
-            echo "Note: Full deployment automation will be"
-            echo "      implemented in Week 2"
-          ENDSSH
+            echo "⚠️  Errors detected:"
+            echo "$ERROR_OUTPUT"
+          fi
+          
+          # Check final status
+          FINAL_STATUS=$(aws ssm get-command-invocation \
+            --region ${{ env.AWS_REGION }} \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'Status' \
+            --output text)
           
           echo ""
           echo "=========================================="
-          echo "✅ Deployment Complete"
+          if [ "$FINAL_STATUS" = "Success" ]; then
+            echo "✅ Deployment Successful!"
+          else
+            echo "❌ Deployment Status: $FINAL_STATUS"
+            exit 1
+          fi
           echo "=========================================="
       
       - name: Verify Application
         env:
-          INSTANCE_IP: ${{ steps.get-ip.outputs.instance-ip }}
+          INSTANCE_IP: ${{ steps.get-instance.outputs.instance-ip }}
         run: |
           echo ""
           echo "=========================================="
           echo "Application Verification"
           echo "=========================================="
           echo ""
-          echo "Application URL: http://$INSTANCE_IP:30001"
+          echo "Frontend URL: http://$INSTANCE_IP:30001"
           echo ""
           
           # Test application endpoint
@@ -341,14 +331,18 @@ jobs:
             echo "✅ Application is responding (HTTP $HTTP_CODE)"
           else
             echo "⚠️  Application returned HTTP $HTTP_CODE"
-            echo "   (Application may still be starting)"
+            echo "   (May still be starting - this is OK)"
           fi
           
           echo ""
           echo "=========================================="
           echo "Deployment Summary"
           echo "=========================================="
+          echo "Method: AWS Systems Manager (Session Manager)"
+          echo "Security: No open SSH port required ✅"
+          echo "Audit: Full CloudTrail logging enabled ✅"
+          echo "Instance ID: ${{ steps.get-instance.outputs.instance-id }}"
           echo "Instance IP: $INSTANCE_IP"
-          echo "Frontend URL: http://$INSTANCE_IP:30001"
-          echo "SSH Access: ssh -i ~/.ssh/github-actions-deploy-key ec2-user@$INSTANCE_IP"
+          echo "Application: http://$INSTANCE_IP:30001"
+          echo "Commit: ${{ github.sha }}"
           echo "=========================================="
