@@ -153,7 +153,52 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Configure AWS credentials
+      - name: 
+        run: |
+          echo "=========================================="
+          echo "AWS Configuration Verification"
+          echo "=========================================="
+          echo ""
+          
+          echo "1. AWS Identity:"
+          aws sts get-caller-identity --region us-east-2
+          
+          echo ""
+          echo "2. Testing EC2 permissions:"
+          aws ec2 describe-instances --region us-east-2 --max-results 5 --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output table || echo "❌ Permission denied or no instances"
+          
+          echo ""
+          echo "3. Count of running instances:"
+          INSTANCE_COUNT=$(aws ec2 describe-instances \
+            --region us-east-2 \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text 2>/dev/null | wc -w | tr -d ' ')
+          echo "Running instances in us-east-2: $INSTANCE_COUNT"
+          
+          if [ "$INSTANCE_COUNT" -eq "0" ]; then
+            echo ""
+            echo "❌ No running instances found in us-east-2"
+            echo ""
+            echo "This means either:"
+            echo "  1. Wrong AWS account (check AWS_ACCESS_KEY_ID secret)"
+            echo "  2. Instance in different region"
+            echo "  3. Instance not running"
+            echo ""
+            echo "Your local AWS account ID:"
+            echo "  Check: aws sts get-caller-identity"
+            echo ""
+            echo "GitHub Actions AWS account ID (see above)"
+            exit 1
+          fi
+          
+          echo ""
+          echo "4. Instance details:"
+          aws ec2 describe-instances \
+            --region us-east-2 \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].[InstanceId,InstanceType,PublicIpAddress,PrivateIpAddress]' \
+            --output table
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
