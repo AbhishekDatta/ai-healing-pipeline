@@ -15,6 +15,7 @@ terraform/outputs.tf
 terraform/variables.tf
 terraform/versions.tf
 terraform/scripts/
+terraform/scripts/testing-scripts/
 terraform/files/
 terraform/scripts/user_data.sh
 terraform/modules/
@@ -119,11 +120,7 @@ run-all-tests.sh
 test_main.py.backup
 test-bootstrap-session-manager.sh
 setup.py
-agent/
 config/
 healing_agent/
-tests/
 requirements.txt
 requirements-complete-py311.txt
-agent/tests/
-agent/testing-scripts/
