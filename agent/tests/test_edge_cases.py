@@ -70,32 +70,27 @@ def test_all_whitespace_input():
 # Concurrent Request Tests
 # ============================================
 
+import pytest
+import asyncio
+from httpx import AsyncClient
+from agent.main import app
+
 @pytest.mark.asyncio
 async def test_concurrent_different_stages():
-    """
-    Test multiple different requests at once
-    
-    REAL-WORLD: Multiple pipelines failing simultaneously
-    """
-    import asyncio
-    
     stages = ["build", "test", "deploy", "security-scan"]
-    
-    async def make_request(stage):
-        failure_data = {
-            "stage": stage,
-            "error_message": f"{stage} failed",
-            "logs": f"Error in {stage}",
-            "timestamp": "2024-01-27T12:00:00Z"
-        }
-        return client.post("/heal", json=failure_data)
-    
-    # All requests at once
-    responses = [make_request(stage) for stage in stages]
-    
-    # All should succeed
-    for response in responses:
-        assert response.status_code == 200
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        async def make_request(stage):
+            failure_data = {
+                "stage": stage,
+                "error_message": f"{stage} failed",
+                "logs": f"Error in {stage}",
+                "timestamp": "2024-01-27T12:00:00Z"
+            }
+            response = await ac.post("/heal", json=failure_data)
+            return response
+        responses = await asyncio.gather(*[make_request(stage) for stage in stages])
+        for response in responses:
+            assert response.status_code == 200
 
 
 # ============================================
