@@ -15,6 +15,7 @@ terraform/outputs.tf
 terraform/variables.tf
 terraform/versions.tf
 terraform/scripts/
+terraform/files/
 terraform/scripts/user_data.sh
 terraform/modules/
 terraform/*.tfvars
@@ -50,15 +51,21 @@ dist/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
 
 # ============================================
 # Testing
 # ============================================
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 *.cover
+.hypothesis/
 coverage.xml
+*.coveragerc
+pytest.ini
 
 # ============================================
 # OS
@@ -99,4 +106,24 @@ temp/
 *.old   
 app/
 online-boutique/
+scripts/
+files/
 setup-ssh.sh
+check-pipeline-status.sh
+diagnose-ssm.sh
+pre-pipeline-status.sh
+test-session-manager.sh
+verify-ssm-agent.sh
+run-basic-tests.sh 
+run-all-tests.sh
+test_main.py.backup
+test-bootstrap-session-manager.sh
+setup.py
+agent/
+config/
+healing_agent/
+tests/
+requirements.txt
+requirements-complete-py311.txt
+agent/tests/
+agent/testing-scripts/
