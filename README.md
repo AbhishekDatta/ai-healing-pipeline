@@ -228,15 +228,15 @@ Built with ❤️ as part of DevOps upskilling journey
 Status: Partial Success - Architecture proven, AI pending
 
 
-# Day 12: Multi-Scenario Testing & Bug Fixes — COMPLETE ✅
+## Day 12: Multi-Scenario Testing & Bug Fixes — COMPLETE ✅
 
-## Objectives Achieved
+### Objectives Achieved
 - ✅ Phase 0: GPT-4o → GPT-5 Standard migration
 - ✅ Phase 1: Real LLM integration (removed pattern matching bypasses)
 - ✅ Phase 2: End-to-end OOMKilled healing with real AI
 - ✅ Phase 3: All 4 failure scenarios tested
 
-## Test Results
+### Test Results
 
 | Test | Scenario | Classification | Action | Result |
 |------|----------|---------------|--------|--------|
@@ -245,17 +245,20 @@ Status: Partial Success - Architecture proven, AI pending
 | 3 | Pod Pending (Unschedulable) | INFRASTRUCTURE_ISSUE | Escalated to human | ✅ CORRECT |
 | 4 | ConfigMap Missing | CONFIGURATION_ERROR | Escalated to human | ✅ CORRECT |
 
-## Bugs Fixed
+### Bugs Fixed
 1. `state.py` — Added missing fields: `pod_status`, `extended_logs_fetched`, `verification_result`
 2. `agent/main.py` — Fixed `success` flag logic (escalation = success, not failure)
 3. `agent/main.py` — Fixed `/workflow/stats` endpoint (wrong method names)
 
-## AI Pipeline Performance
+### AI Pipeline Performance
 - Gemini 2.5 Flash: Fast, accurate classification across all 4 scenarios
 - Claude Sonnet: Precise root cause analysis with actionable reasoning
 - GPT-5 Standard: Conservative, safety-conscious confidence scoring
 - Cost per healing event: ~$0.01–$0.02
 
-## Known Issues (Non-blocking)
+### Known Issues (Non-blocking)
 - `act_node` reports success even when tool returns 404 (bare Pod vs Deployment)
 - `cost_tracker` resets on server reload (in-memory only)
+
+
+## Day 13: Add deploy-healing-agent job to CI/CD pipeline"
