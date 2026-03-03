@@ -346,74 +346,95 @@ jobs:
           echo "Application: http://$INSTANCE_IP:30001"
           echo "Commit: ${{ github.sha }}"
           echo "=========================================="
-
   deploy-healing-agent:
     name: Deploy Healing Agent to AWS
     runs-on: ubuntu-latest
     needs: [test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy code via rsync
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          INSTANCE_IP: ${{ secrets.EC2_INSTANCE_IP }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Instance ID
+        id: get-instance
         run: |
-          # Setup SSH key
-          echo "$SSH_PRIVATE_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-
-          # Rsync code to instance (exclude secrets and build artifacts)
-          rsync -avz \
-            --exclude='.venv/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.env' \
-            --exclude='.git/' \
-            --exclude='terraform/.terraform/' \
-            --exclude='terraform/*.tfstate*' \
-            --exclude='terraform/*.tfstate.backup' \
-            --exclude='htmlcov/' \
-            --exclude='*.egg-info/' \
-            --exclude='coverage.xml' \
-            -e "ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no" \
-            ./ \
-            ec2-user@$INSTANCE_IP:/home/ec2-user/ai-healing-pipeline/
-
-          echo "✅ Code synced to $INSTANCE_IP"
-
-      - name: Restart healing agent service
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          INSTANCE_IP: ${{ secrets.EC2_INSTANCE_IP }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-
-          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
-            ec2-user@$INSTANCE_IP << 'EOF'
-            sudo systemctl restart ai-healing-agent
-            sleep 5
-            sudo systemctl status ai-healing-agent --no-pager
-            echo "---"
-            curl -s http://localhost:8000/workflow/status
-            EOF
-
-      - name: Verify deployment
-        env:
-          INSTANCE_IP: ${{ secrets.EC2_INSTANCE_IP }}
-        run: |
-          sleep 5
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://$INSTANCE_IP:8000/workflow/status || echo "000")
-
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Healing agent is live at http://$INSTANCE_IP:8000"
-          else
-            echo "❌ Agent not responding (HTTP $HTTP_CODE)"
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --region ${{ env.AWS_REGION }} \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "❌ No running instance found"
             exit 1
           fi
-          YAML
+          echo "✅ Found instance: $INSTANCE_ID"
+          echo "instance-id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: Deploy and restart via SSM
+        env:
+          INSTANCE_ID: ${{ steps.get-instance.outputs.instance-id }}
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region ${{ env.AWS_REGION }} \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy healing agent - ${{ github.sha }}" \
+            --parameters 'commands=[
+              "echo \"=== Restarting healing agent ===\"",
+              "sudo systemctl restart ai-healing-agent",
+              "sleep 5",
+              "sudo systemctl status ai-healing-agent --no-pager",
+              "echo \"=== Health check ===\"",
+              "curl -s http://localhost:8000/workflow/status",
+              "echo \"\"",
+              "echo \"✅ Deploy complete\""
+            ]' \
+            --output text \
+            --query 'Command.CommandId')
+
+          echo "Command ID: $COMMAND_ID"
+
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region ${{ env.AWS_REGION }} \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "Pending")
+            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ]; then
+              break
+            fi
+            echo "  Status: $STATUS (check $i/30)"
+            sleep 2
+          done
+
+          echo "=========================================="
+          echo "SSM Output:"
+          echo "=========================================="
+          aws ssm get-command-invocation \
+            --region ${{ env.AWS_REGION }} \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
+
+          FINAL_STATUS=$(aws ssm get-command-invocation \
+            --region ${{ env.AWS_REGION }} \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'Status' \
+            --output text)
+
+          if [ "$FINAL_STATUS" = "Success" ]; then
+            echo "✅ Healing agent deployed successfully"
+          else
+            echo "❌ Deploy failed: $FINAL_STATUS"
+            exit 1
+          fi
